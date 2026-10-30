@@ -20,23 +20,67 @@ app.use(express.json({ limit: '10mb' }));
 // Serve static frontend files from 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Google Drive Auth (Place service-account.json in root)
+// Google Drive Auth Paths
 const SERVICE_ACCOUNT_PATH = path.join(__dirname, 'service-account.json');
+const OAUTH_CONFIG_PATH = path.join(__dirname, 'oauth-credentials.json');
+const TOKENS_PATH = path.join(__dirname, 'tokens.json');
 
+// Helper: Load OAuth Client configuration (file or environment)
+function getOAuthConfig() {
+  if (fs.existsSync(OAUTH_CONFIG_PATH)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(OAUTH_CONFIG_PATH, 'utf8'));
+      return data.installed || data.web || data;
+    } catch (_) {}
+  }
+  if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+    return {
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uris: ['http://localhost:4000/api/auth/google/callback'],
+    };
+  }
+  return null;
+}
+
+// Helper: Create an OAuth2 client instance
+function getOAuth2Client() {
+  const config = getOAuthConfig();
+  if (!config || !config.client_id || !config.client_secret) return null;
+  const redirectUri = (config.redirect_uris && config.redirect_uris[0]) || 'http://localhost:4000/api/auth/google/callback';
+  return new google.auth.OAuth2(config.client_id, config.client_secret, redirectUri);
+}
+
+// Main Google Drive client getter: Prioritizes user's personal OAuth2 credentials (15 GB quota)
 function getDriveClient() {
-  if (!fs.existsSync(SERVICE_ACCOUNT_PATH)) {
-    return null;
+  // 1. Personal OAuth2 Account (No service account storage quota limits)
+  if (fs.existsSync(TOKENS_PATH)) {
+    const oauth2Client = getOAuth2Client();
+    if (oauth2Client) {
+      try {
+        const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf8'));
+        oauth2Client.setCredentials(tokens);
+        return google.drive({ version: 'v3', auth: oauth2Client });
+      } catch (e) {
+        console.warn('OAuth tokens error:', e.message);
+      }
+    }
   }
-  try {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: SERVICE_ACCOUNT_PATH,
-      scopes: ['https://www.googleapis.com/auth/drive'],
-    });
-    return google.drive({ version: 'v3', auth });
-  } catch (err) {
-    console.warn(`Could not initialize Google Drive client: ${err.message}`);
-    return null;
+
+  // 2. Service Account Fallback
+  if (fs.existsSync(SERVICE_ACCOUNT_PATH)) {
+    try {
+      const auth = new google.auth.GoogleAuth({
+        keyFile: SERVICE_ACCOUNT_PATH,
+        scopes: ['https://www.googleapis.com/auth/drive'],
+      });
+      return google.drive({ version: 'v3', auth });
+    } catch (err) {
+      console.warn(`Could not initialize Google Drive client: ${err.message}`);
+    }
   }
+
+  return null;
 }
 
 const DEFAULT_HEADERS = {
@@ -45,14 +89,129 @@ const DEFAULT_HEADERS = {
   'Accept-Language': 'en-US,en;q=0.5',
 };
 
-// Endpoint 0: Check backend status & service-account.json presence
+// Endpoint 0: Check backend status, service account, and OAuth presence
 app.get('/api/status', (req, res) => {
   const hasServiceAccount = fs.existsSync(SERVICE_ACCOUNT_PATH);
+  const hasTokens = fs.existsSync(TOKENS_PATH);
+  const oauthConfig = getOAuthConfig();
+
+  let userEmail = null;
+  if (hasTokens) {
+    try {
+      const tok = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf8'));
+      userEmail = tok.user_email || null;
+    } catch (_) {}
+  }
+
   res.json({
     status: 'ok',
+    driveConfigured: hasTokens || hasServiceAccount,
     serviceAccountConfigured: hasServiceAccount,
+    oauthConfigured: Boolean(oauthConfig?.client_id && oauthConfig?.client_secret),
+    authenticatedWithOAuth: hasTokens,
+    authType: hasTokens ? 'oauth' : (hasServiceAccount ? 'service_account' : 'none'),
+    userEmail,
     timestamp: new Date().toISOString(),
   });
+});
+
+// OAuth 2.0 Route: Check OAuth authentication status
+app.get('/api/auth/google/status', (req, res) => {
+  const oauthConfig = getOAuthConfig();
+  const hasTokens = fs.existsSync(TOKENS_PATH);
+  let userEmail = null;
+  if (hasTokens) {
+    try {
+      const tok = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf8'));
+      userEmail = tok.user_email || null;
+    } catch (_) {}
+  }
+  res.json({
+    oauthConfigured: Boolean(oauthConfig?.client_id && oauthConfig?.client_secret),
+    authenticated: hasTokens,
+    userEmail,
+  });
+});
+
+// OAuth 2.0 Route: Save Client ID & Secret
+app.post('/api/auth/google/configure', (req, res) => {
+  const { clientId, clientSecret } = req.body;
+  if (!clientId || !clientSecret) {
+    return res.status(400).json({ error: 'clientId and clientSecret are required' });
+  }
+
+  const config = {
+    client_id: clientId.trim(),
+    client_secret: clientSecret.trim(),
+    redirect_uris: ['http://localhost:4000/api/auth/google/callback'],
+  };
+
+  try {
+    fs.writeFileSync(OAUTH_CONFIG_PATH, JSON.stringify(config, null, 2));
+    res.json({ success: true, message: 'OAuth credentials saved successfully' });
+  } catch (err) {
+    res.status(500).json({ error: `Failed to save credentials: ${err.message}` });
+  }
+});
+
+// OAuth 2.0 Route: Get Google Consent Screen URL
+app.get('/api/auth/google/url', (req, res) => {
+  const oauth2Client = getOAuth2Client();
+  if (!oauth2Client) {
+    return res.status(400).json({ error: 'OAuth credentials not configured yet' });
+  }
+
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: [
+      'https://www.googleapis.com/auth/drive',
+      'https://www.googleapis.com/auth/userinfo.email',
+    ],
+    prompt: 'consent',
+  });
+
+  res.json({ url });
+});
+
+// OAuth 2.0 Route: Google Redirect Callback
+app.get('/api/auth/google/callback', async (req, res) => {
+  const { code } = req.query;
+  if (!code) return res.status(400).send('Missing code parameter');
+
+  const oauth2Client = getOAuth2Client();
+  if (!oauth2Client) return res.status(500).send('OAuth client not configured');
+
+  try {
+    const { tokens } = await oauth2Client.getToken(String(code));
+    oauth2Client.setCredentials(tokens);
+
+    let email = null;
+    try {
+      const oauth2 = google.oauth2({ version: 'v2', auth: oauth2Client });
+      const userInfo = await oauth2.userinfo.get();
+      email = userInfo.data.email;
+    } catch (_) {}
+
+    const savedData = {
+      ...tokens,
+      user_email: email,
+      saved_at: new Date().toISOString(),
+    };
+    fs.writeFileSync(TOKENS_PATH, JSON.stringify(savedData, null, 2));
+
+    res.redirect('/?auth=success');
+  } catch (err) {
+    console.error('Failed to exchange code for tokens:', err.message);
+    res.redirect(`/?auth=error&msg=${encodeURIComponent(err.message)}`);
+  }
+});
+
+// OAuth 2.0 Route: Disconnect Personal Account
+app.post('/api/auth/google/disconnect', (req, res) => {
+  if (fs.existsSync(TOKENS_PATH)) {
+    fs.unlinkSync(TOKENS_PATH);
+  }
+  res.json({ success: true, message: 'Disconnected Google Account' });
 });
 
 // Helper: Format bytes into readable KB / MB
@@ -174,6 +333,8 @@ async function getExistingDriveFilesMap(folderId, driveInstance) {
         fields: 'nextPageToken, files(id, name, webViewLink, size)',
         pageSize: 500,
         pageToken,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
       });
 
       for (const file of res.data.files || []) {
@@ -204,6 +365,8 @@ async function findExistingFileInDrive(filename, folderId, driveInstance) {
       q,
       fields: 'files(id, name, webViewLink, size)',
       pageSize: 1,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
 
     return res.data.files && res.data.files.length > 0 ? res.data.files[0] : null;
@@ -604,7 +767,7 @@ app.post('/api/upload-drive', async (req, res) => {
 
   const drive = getDriveClient();
   if (!drive) {
-    const errorMsg = 'Google Drive is not configured. Please place your service-account.json in the project root directory.';
+    const errorMsg = 'Google Drive is not connected. Please click "Connect Personal Google Drive" in the header or place service-account.json in the project root.';
     pdfs.forEach(pdf => {
       emitProgress(sessionId, {
         url: pdf.url,
@@ -619,7 +782,7 @@ app.post('/api/upload-drive', async (req, res) => {
         url: pdf.url,
         filename: pdf.filename,
         status: 'failed',
-        error: 'service-account.json missing on server'
+        error: errorMsg,
       }))
     });
   }
@@ -716,6 +879,7 @@ app.post('/api/upload-drive', async (req, res) => {
             body: monitorStream,
           },
           fields: 'id, name, webViewLink',
+          supportsAllDrives: true,
         });
 
         emitProgress(sessionId, {
@@ -732,13 +896,17 @@ app.post('/api/upload-drive', async (req, res) => {
           link: driveRes.data.webViewLink,
         };
       } catch (err) {
+        let errMsg = err.message;
+        if (errMsg && errMsg.includes('Service Accounts do not have storage quota')) {
+          errMsg = 'Service Accounts have 0 MB quota on personal Drive. Click "Connect Personal Google Drive" above to use your 15 GB quota.';
+        }
         emitProgress(sessionId, {
           url: pdf.url,
           status: 'failed',
           progress: 0,
-          error: err.message,
+          error: errMsg,
         });
-        return { url: pdf.url, filename: pdf.filename, status: 'failed', error: err.message };
+        return { url: pdf.url, filename: pdf.filename, status: 'failed', error: errMsg };
       }
     })
   );

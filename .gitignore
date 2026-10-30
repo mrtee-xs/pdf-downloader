@@ -1,5 +1,8 @@
 node_modules/
 service-account.json
+tokens.json
+oauth-credentials.json
+client_secret*.json
 .env
 .chrome_data/
 scratch/

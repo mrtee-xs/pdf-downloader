@@ -229,6 +229,21 @@
       </svg>
     );
 
+    const IconCopy = ({ size = 16, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2"></rect>
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"></path>
+      </svg>
+    );
+
+    const IconLogOut = ({ size = 16, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+        <polyline points="16 17 21 12 16 7"></polyline>
+        <line x1="21" y1="12" x2="9" y2="12"></line>
+      </svg>
+    );
+
     // Generate a unique session ID per browser tab
     const SESSION_ID = Math.random().toString(36).substring(2, 12);
 
@@ -344,21 +359,122 @@
       const [isBulkUploading, setIsBulkUploading] = useState(false);
 
       // Status & Alerts
-      const [serverStatus, setServerStatus] = useState({ loaded: false, driveConfigured: false });
+      const [serverStatus, setServerStatus] = useState({
+        loaded: false,
+        driveConfigured: false,
+        serviceAccountConfigured: false,
+        oauthConfigured: false,
+        authenticatedWithOAuth: false,
+        authType: 'none',
+        userEmail: null,
+      });
       const [bannerMessage, setBannerMessage] = useState(null);
       const [cloudflareError, setCloudflareError] = useState(null);
       const [showHelpModal, setShowHelpModal] = useState(false);
+      const [showOAuthModal, setShowOAuthModal] = useState(false);
+      const [oauthClientId, setOauthClientId] = useState('');
+      const [oauthClientSecret, setOauthClientSecret] = useState('');
+      const [isSavingOAuth, setIsSavingOAuth] = useState(false);
+      const [copiedRedirectUri, setCopiedRedirectUri] = useState(false);
 
-      // Restore folderId & initial status
-      useEffect(() => {
-        const savedFolder = localStorage.getItem('pdf_drive_folder_id');
-        if (savedFolder) setFolderId(savedFolder);
-
+      const loadStatus = useCallback(() => {
         fetch('/api/status')
           .then(res => res.json())
-          .then(data => setServerStatus({ loaded: true, driveConfigured: data.serviceAccountConfigured }))
-          .catch(() => setServerStatus({ loaded: true, driveConfigured: false }));
+          .then(data => setServerStatus({ loaded: true, ...data }))
+          .catch(() => setServerStatus(prev => ({ ...prev, loaded: true })));
       }, []);
+
+      // Restore folderId, initial status & check OAuth redirect params
+      useEffect(() => {
+        const savedFolder = localStorage.getItem('pdf_drive_folder_id');
+        if (savedFolder) {
+          setFolderId(savedFolder);
+        } else {
+          setFolderId('1WIgkg8aNOvxYpib3oXcuj1ITNS6A2gsg');
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('auth') === 'success') {
+          setBannerMessage({
+            type: 'success',
+            text: '🎉 Google Account connected successfully! You can now stream books straight to your personal Google Drive (15 GB quota).'
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (params.get('auth') === 'error') {
+          setBannerMessage({
+            type: 'error',
+            text: `Google authorization failed: ${params.get('msg') || 'Unknown error'}`
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        loadStatus();
+      }, [loadStatus]);
+
+      const handleSaveAndConnectOAuth = async (e) => {
+        if (e && e.preventDefault) e.preventDefault();
+        if (!oauthClientId.trim() || !oauthClientSecret.trim()) {
+          setBannerMessage({ type: 'error', text: 'Please enter both Client ID and Client Secret.' });
+          return;
+        }
+
+        setIsSavingOAuth(true);
+        try {
+          const res = await fetch('/api/auth/google/configure', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              clientId: oauthClientId.trim(),
+              clientSecret: oauthClientSecret.trim(),
+            })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Failed to save OAuth credentials');
+
+          // Immediately fetch the auth consent URL and redirect to Google
+          const urlRes = await fetch('/api/auth/google/url');
+          const urlData = await urlRes.json();
+          if (!urlRes.ok || !urlData.url) throw new Error(urlData.error || 'Failed to generate sign-in URL');
+
+          window.location.href = urlData.url;
+        } catch (err) {
+          setBannerMessage({ type: 'error', text: err.message });
+          setIsSavingOAuth(false);
+        }
+      };
+
+      const handleDirectSignIn = async () => {
+        try {
+          const urlRes = await fetch('/api/auth/google/url');
+          const urlData = await urlRes.json();
+          if (!urlRes.ok || !urlData.url) {
+            setShowOAuthModal(true);
+            return;
+          }
+          window.location.href = urlData.url;
+        } catch (err) {
+          setShowOAuthModal(true);
+        }
+      };
+
+      const handleDisconnectGoogle = async () => {
+        if (!confirm('Disconnect your personal Google account?')) return;
+        try {
+          await fetch('/api/auth/google/disconnect', { method: 'POST' });
+          setBannerMessage({ type: 'info', text: 'Personal Google Drive disconnected.' });
+          loadStatus();
+        } catch (err) {
+          setBannerMessage({ type: 'error', text: err.message });
+        }
+      };
+
+      const copyRedirectUri = () => {
+        const uri = 'http://localhost:4000/api/auth/google/callback';
+        navigator.clipboard.writeText(uri).then(() => {
+          setCopiedRedirectUri(true);
+          setTimeout(() => setCopiedRedirectUri(false), 2000);
+        });
+      };
 
       const handleFolderChange = (val) => {
         setFolderId(val);
@@ -660,8 +776,8 @@
               </div>
             </div>
 
-            {/* Status & Guide Pill */}
-            <div className="flex items-center gap-3 self-start md:self-auto">
+            {/* Header Right: Google Drive Status & Connection */}
+            <div className="flex items-center gap-2.5 flex-wrap self-start md:self-auto">
               <button
                 onClick={() => setShowHelpModal(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium chrome-subtle-button"
@@ -671,12 +787,40 @@
                 <span>Drive Guide</span>
               </button>
 
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs">
-                <span className={`w-2 h-2 rounded-full ${serverStatus.driveConfigured ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]' : 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]'}`} />
-                <span className="text-zinc-300">
-                  {serverStatus.driveConfigured ? 'Google Drive Ready' : 'service-account.json Pending'}
-                </span>
-              </div>
+              {serverStatus.authenticatedWithOAuth ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/50 border border-emerald-500/40 text-xs text-emerald-300">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+                    <span className="font-medium truncate max-w-[180px]" title={serverStatus.userEmail}>
+                      {serverStatus.userEmail || 'Personal Drive'}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-200 font-mono">15 GB Quota</span>
+                  </div>
+                  <button
+                    onClick={handleDisconnectGoogle}
+                    className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-950/40 border border-white/10 transition"
+                    title="Disconnect Personal Google Account"
+                  >
+                    <IconLogOut size={14} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={serverStatus.oauthConfigured ? handleDirectSignIn : () => setShowOAuthModal(true)}
+                    className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/20 border border-blue-400/40 transition cursor-pointer"
+                  >
+                    <IconCloudUpload size={14} />
+                    <span>Connect Personal Drive (15 GB)</span>
+                  </button>
+
+                  {serverStatus.serviceAccountConfigured && (
+                    <span className="text-[11px] text-zinc-400 bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg" title="Service Account is active for Shared Drives">
+                      Shared Drives Fallback
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </header>
 
@@ -1257,10 +1401,133 @@
             </div>
           )}
 
+          {/* OAuth 2.0 Personal Drive Connection Modal */}
+          {showOAuthModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+              <div className="bg-[#121212] border border-white/15 rounded-2xl p-6 md:p-8 max-w-xl w-full shadow-2xl relative max-h-[90vh] overflow-y-auto">
+                <button
+                  onClick={() => setShowOAuthModal(false)}
+                  className="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-white/5"
+                >
+                  <IconX size={18} />
+                </button>
+
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                    <IconCloudUpload size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Connect Personal Google Drive</h3>
+                    <p className="text-xs text-zinc-400">Unlock your free 15 GB quota on personal Google Drive</p>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-blue-950/30 border border-blue-500/30 text-xs text-blue-200 mb-5 leading-relaxed">
+                  <strong>Why is this required?</strong> Google assigns <strong>0 MB storage quota</strong> to automated Service Accounts on personal <code className="text-white">@gmail.com</code> drives. Connecting via OAuth 2.0 lets you upload books directly using your personal account's <strong>15 GB free storage</strong>!
+                </div>
+
+                <div className="space-y-4 text-xs">
+                  <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-semibold text-white text-xs">Quick 2-Step Setup in Google Cloud Console</h4>
+                      <a
+                        href="https://console.cloud.google.com/apis/credentials?project=psychic-fold-498616-i0"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-blue-400 hover:text-blue-300 underline inline-flex items-center gap-1"
+                      >
+                        <span>Open Console (psychic-fold-498616-i0)</span>
+                        <IconExternalLink size={12} />
+                      </a>
+                    </div>
+
+                    <ol className="list-decimal list-inside space-y-2 text-zinc-300 pl-1">
+                      <li>
+                        In Google Cloud Console, click <strong>+ CREATE CREDENTIALS</strong> &rarr; <strong>OAuth client ID</strong>.
+                        <div className="text-[11px] text-zinc-400 mt-0.5 ml-4">
+                          (If prompted, click <em>Configure Consent Screen</em> &rarr; choose <em>External</em> &rarr; enter app name and email).
+                        </div>
+                      </li>
+                      <li>
+                        Set Application Type to <strong>Web application</strong>.
+                      </li>
+                      <li>
+                        Under <strong>Authorized redirect URIs</strong>, click <strong>+ ADD URI</strong> and paste:
+                        <div className="mt-1.5 flex items-center gap-2 bg-black/60 border border-white/10 p-2 rounded-lg font-mono text-[11px] text-emerald-300">
+                          <span className="truncate flex-1">http://localhost:4000/api/auth/google/callback</span>
+                          <button
+                            type="button"
+                            onClick={copyRedirectUri}
+                            className="px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 transition text-[10px]"
+                          >
+                            <IconCopy size={11} />
+                            <span>{copiedRedirectUri ? 'Copied!' : 'Copy'}</span>
+                          </button>
+                        </div>
+                      </li>
+                      <li>
+                        Click <strong>CREATE</strong> and copy your <strong>Client ID</strong> and <strong>Client Secret</strong> below:
+                      </li>
+                    </ol>
+                  </div>
+
+                  <form onSubmit={handleSaveAndConnectOAuth} className="space-y-3.5">
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
+                        OAuth Client ID:
+                      </label>
+                      <input
+                        type="text"
+                        value={oauthClientId}
+                        onChange={(e) => setOauthClientId(e.target.value)}
+                        placeholder="e.g. 123456789-abcdefghijk.apps.googleusercontent.com"
+                        className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/15 text-white placeholder-zinc-600 text-xs focus:outline-none focus:border-blue-500 font-mono transition"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-zinc-300 mb-1">
+                        OAuth Client Secret:
+                      </label>
+                      <input
+                        type="password"
+                        value={oauthClientSecret}
+                        onChange={(e) => setOauthClientSecret(e.target.value)}
+                        placeholder="e.g. GOCSPX-xxxxxxxxxxxxxxxxxxxx"
+                        className="w-full px-3 py-2 rounded-xl bg-white/5 border border-white/15 text-white placeholder-zinc-600 text-xs focus:outline-none focus:border-blue-500 font-mono transition"
+                        required
+                      />
+                    </div>
+
+                    <div className="pt-3 border-t border-white/10 flex items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setShowOAuthModal(false)}
+                        className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-400 hover:text-white"
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={isSavingOAuth || !oauthClientId.trim() || !oauthClientSecret.trim()}
+                        className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-500/25 border border-blue-400/40 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition cursor-pointer"
+                      >
+                        {isSavingOAuth ? <IconLoader2 size={14} /> : <IconCloudUpload size={14} />}
+                        <span>Save & Connect with Google</span>
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Help Modal */}
           {showHelpModal && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
-              <div className="bg-[#121212] border border-white/15 rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl relative">
+              <div className="bg-[#121212] border border-white/15 rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl relative max-h-[90vh] overflow-y-auto">
                 <button
                   onClick={() => setShowHelpModal(false)}
                   className="absolute top-4 right-4 text-zinc-400 hover:text-white"
@@ -1270,31 +1537,38 @@
 
                 <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
                   <IconCloudUpload size={20} className="text-white" />
-                  Google Drive Setup Instructions
+                  Google Drive Setup Options
                 </h3>
 
-                <p className="text-xs text-zinc-400 mb-4">
-                  To save PDFs straight to Google Drive without holding files on your server:
-                </p>
+                <div className="space-y-4 text-xs text-zinc-300">
+                  {/* Option 1: Personal Drive */}
+                  <div className="p-3.5 rounded-xl bg-blue-950/20 border border-blue-500/30">
+                    <h4 className="font-semibold text-blue-300 mb-1">Option 1: Personal Google Drive (Recommended)</h4>
+                    <p className="text-zinc-400 mb-2 leading-relaxed">
+                      Uploads count against your personal 15 GB Google Drive quota.
+                    </p>
+                    <button
+                      onClick={() => { setShowHelpModal(false); setShowOAuthModal(true); }}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs flex items-center gap-1.5 transition"
+                    >
+                      <IconCloudUpload size={13} />
+                      <span>Configure Personal Sign-In</span>
+                    </button>
+                  </div>
 
-                <ol className="list-decimal list-inside space-y-2.5 text-xs text-zinc-300">
-                  <li>
-                    <strong>Google Cloud Console:</strong> Create a Project, enable the <em>Google Drive API</em>, and create a <em>Service Account</em>.
-                  </li>
-                  <li>
-                    <strong>Download Key:</strong> Download the Service Account JSON key and rename it to:
-                    <code className="block mt-1 font-mono bg-white/10 p-1.5 rounded text-white text-[11px]">
-                      service-account.json
-                    </code>
-                    Place it in the root folder alongside <code className="text-zinc-200">index.js</code>.
-                  </li>
-                  <li>
-                    <strong>Share Google Drive Folder:</strong> Open your Google Drive, right-click the target folder &rarr; <em>Share</em>, and paste the service account's <code className="text-emerald-300">client_email</code> as <strong>Editor</strong>.
-                  </li>
-                  <li>
-                    <strong>Folder ID:</strong> Copy the folder ID from the URL (e.g. <code className="text-zinc-400">drive.google.com/drive/folders/<b>YOUR_FOLDER_ID</b></code>) and paste it into the <strong>Drive Folder ID</strong> input.
-                  </li>
-                </ol>
+                  {/* Option 2: Shared Drive with Service Account */}
+                  <div className="p-3.5 rounded-xl bg-white/[0.03] border border-white/10">
+                    <h4 className="font-semibold text-zinc-200 mb-1">Option 2: Google Workspace Shared Drive</h4>
+                    <p className="text-zinc-400 mb-2 leading-relaxed">
+                      If you have a Google Workspace account, service accounts can write unlimited files to <strong>Shared Drives</strong> (Team Drives).
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1.5 text-zinc-400">
+                      <li>Create or open a <strong>Shared Drive</strong> in Google Drive.</li>
+                      <li>Add <code className="text-emerald-300 text-[11px]">pdf-bot@psychic-fold-498616-i0.iam.gserviceaccount.com</code> as <strong>Content Manager</strong>.</li>
+                      <li>Paste the folder or Shared Drive ID into the <strong>Drive Folder ID</strong> box.</li>
+                    </ol>
+                  </div>
+                </div>
 
                 <div className="mt-6 pt-4 border-t border-white/10 flex justify-end">
                   <button
