@@ -25,40 +25,147 @@ const SERVICE_ACCOUNT_PATH = path.join(__dirname, 'service-account.json');
 const OAUTH_CONFIG_PATH = path.join(__dirname, 'oauth-credentials.json');
 const TOKENS_PATH = path.join(__dirname, 'tokens.json');
 
-// Helper: Load OAuth Client configuration (file or environment)
-function getOAuthConfig() {
-  if (fs.existsSync(OAUTH_CONFIG_PATH)) {
+// Cookie parser helper for serverless stateless sessions
+function parseCookies(req) {
+  const list = {};
+  const cookieHeader = req?.headers?.cookie;
+  if (!cookieHeader) return list;
+
+  cookieHeader.split(';').forEach(cookie => {
+    let [name, ...rest] = cookie.split('=');
+    name = name?.trim();
+    if (!name) return;
+    const value = rest.join('=').trim();
     try {
-      const data = JSON.parse(fs.readFileSync(OAUTH_CONFIG_PATH, 'utf8'));
-      return data.installed || data.web || data;
-    } catch (_) {}
-  }
+      list[name] = decodeURIComponent(value);
+    } catch (_) {
+      list[name] = value;
+    }
+  });
+
+  return list;
+}
+
+// Helper: Load OAuth Client configuration (env, file, or default)
+function getOAuthConfig() {
+  // 1. Process environment variables
   if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     return {
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uris: ['http://localhost:4000/api/auth/google/callback'],
+      redirect_uris: process.env.GOOGLE_REDIRECT_URI
+        ? [process.env.GOOGLE_REDIRECT_URI]
+        : [
+            'https://pdf-downloader-9oux.vercel.app/api/auth/google/callback',
+            'http://localhost:4000/api/auth/google/callback'
+          ],
     };
   }
+
+  // 2. Local credentials file
+  const paths = [
+    OAUTH_CONFIG_PATH,
+    path.join(__dirname, 'oauth-credentials.json'),
+    '/tmp/oauth-credentials.json',
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return data.installed || data.web || data;
+      } catch (_) {}
+    }
+  }
+
+  // 3. Fallback: No credentials configured yet
   return null;
 }
 
+// Dynamically determine the matching redirect URI for current request
+function getOAuthRedirectUri(config, req) {
+  if (!config || !config.redirect_uris || !config.redirect_uris.length) {
+    return 'https://pdf-downloader-9oux.vercel.app/api/auth/google/callback';
+  }
+  if (!req) return config.redirect_uris[0];
+
+  const host = req.get('x-forwarded-host') || req.get('host') || '';
+  const proto = req.get('x-forwarded-proto') || req.protocol || (host.includes('localhost') ? 'http' : 'https');
+  const requestOrigin = `${proto}://${host}`;
+
+  const match = config.redirect_uris.find(u => u.startsWith(requestOrigin));
+  if (match) return match;
+
+  return config.redirect_uris[0];
+}
+
 // Helper: Create an OAuth2 client instance
-function getOAuth2Client() {
+function getOAuth2Client(req) {
   const config = getOAuthConfig();
   if (!config || !config.client_id || !config.client_secret) return null;
-  const redirectUri = (config.redirect_uris && config.redirect_uris[0]) || 'http://localhost:4000/api/auth/google/callback';
+  const redirectUri = getOAuthRedirectUri(config, req);
   return new google.auth.OAuth2(config.client_id, config.client_secret, redirectUri);
 }
 
+// Retrieve user tokens from HttpOnly cookie or disk (/tmp)
+function getUserTokens(req) {
+  if (req) {
+    const cookies = parseCookies(req);
+    if (cookies.gdrive_tokens) {
+      try {
+        return JSON.parse(cookies.gdrive_tokens);
+      } catch (_) {}
+    }
+  }
+
+  const paths = [TOKENS_PATH, path.join(__dirname, 'tokens.json'), '/tmp/tokens.json'];
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      try {
+        return JSON.parse(fs.readFileSync(p, 'utf8'));
+      } catch (_) {}
+    }
+  }
+
+  return null;
+}
+
+// Save tokens to both disk (if writable) and HttpOnly cookie
+function saveUserTokens(res, tokens) {
+  try {
+    fs.writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2));
+  } catch (_) {
+    try {
+      fs.writeFileSync('/tmp/tokens.json', JSON.stringify(tokens, null, 2));
+    } catch (_) {}
+  }
+
+  if (res) {
+    const serialized = encodeURIComponent(JSON.stringify(tokens));
+    res.setHeader('Set-Cookie', `gdrive_tokens=${serialized}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000`);
+  }
+}
+
+// Clear user tokens on disconnect
+function clearUserTokens(res) {
+  const paths = [TOKENS_PATH, path.join(__dirname, 'tokens.json'), '/tmp/tokens.json'];
+  for (const p of paths) {
+    if (fs.existsSync(p)) {
+      try { fs.unlinkSync(p); } catch (_) {}
+    }
+  }
+  if (res) {
+    res.setHeader('Set-Cookie', `gdrive_tokens=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+  }
+}
+
 // Main Google Drive client getter: Prioritizes user's personal OAuth2 credentials (15 GB quota)
-function getDriveClient() {
+function getDriveClient(req) {
   // 1. Personal OAuth2 Account (No service account storage quota limits)
-  if (fs.existsSync(TOKENS_PATH)) {
-    const oauth2Client = getOAuth2Client();
+  const tokens = getUserTokens(req);
+  if (tokens) {
+    const oauth2Client = getOAuth2Client(req);
     if (oauth2Client) {
       try {
-        const tokens = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf8'));
         oauth2Client.setCredentials(tokens);
         return google.drive({ version: 'v3', auth: oauth2Client });
       } catch (e) {
@@ -67,7 +174,7 @@ function getDriveClient() {
     }
   }
 
-  // 2. Service Account Fallback
+  // 2. Service Account Fallback (File)
   if (fs.existsSync(SERVICE_ACCOUNT_PATH)) {
     try {
       const auth = new google.auth.GoogleAuth({
@@ -77,6 +184,20 @@ function getDriveClient() {
       return google.drive({ version: 'v3', auth });
     } catch (err) {
       console.warn(`Could not initialize Google Drive client: ${err.message}`);
+    }
+  }
+
+  // 3. Service Account Fallback (Environment Variable for Vercel)
+  if (process.env.SERVICE_ACCOUNT_KEY) {
+    try {
+      const credentials = JSON.parse(process.env.SERVICE_ACCOUNT_KEY);
+      const auth = new google.auth.GoogleAuth({
+        credentials,
+        scopes: ['https://www.googleapis.com/auth/drive'],
+      });
+      return google.drive({ version: 'v3', auth });
+    } catch (err) {
+      console.warn(`Could not initialize Google Drive client from env: ${err.message}`);
     }
   }
 
@@ -91,45 +212,30 @@ const DEFAULT_HEADERS = {
 
 // Endpoint 0: Check backend status, service account, and OAuth presence
 app.get('/api/status', (req, res) => {
-  const hasServiceAccount = fs.existsSync(SERVICE_ACCOUNT_PATH);
-  const hasTokens = fs.existsSync(TOKENS_PATH);
+  const tokens = getUserTokens(req);
+  const hasServiceAccount = fs.existsSync(SERVICE_ACCOUNT_PATH) || Boolean(process.env.SERVICE_ACCOUNT_KEY);
   const oauthConfig = getOAuthConfig();
-
-  let userEmail = null;
-  if (hasTokens) {
-    try {
-      const tok = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf8'));
-      userEmail = tok.user_email || null;
-    } catch (_) {}
-  }
 
   res.json({
     status: 'ok',
-    driveConfigured: hasTokens || hasServiceAccount,
+    driveConfigured: Boolean(tokens || hasServiceAccount),
     serviceAccountConfigured: hasServiceAccount,
     oauthConfigured: Boolean(oauthConfig?.client_id && oauthConfig?.client_secret),
-    authenticatedWithOAuth: hasTokens,
-    authType: hasTokens ? 'oauth' : (hasServiceAccount ? 'service_account' : 'none'),
-    userEmail,
+    authenticatedWithOAuth: Boolean(tokens),
+    authType: tokens ? 'oauth' : (hasServiceAccount ? 'service_account' : 'none'),
+    userEmail: tokens ? tokens.user_email : null,
     timestamp: new Date().toISOString(),
   });
 });
 
 // OAuth 2.0 Route: Check OAuth authentication status
 app.get('/api/auth/google/status', (req, res) => {
+  const tokens = getUserTokens(req);
   const oauthConfig = getOAuthConfig();
-  const hasTokens = fs.existsSync(TOKENS_PATH);
-  let userEmail = null;
-  if (hasTokens) {
-    try {
-      const tok = JSON.parse(fs.readFileSync(TOKENS_PATH, 'utf8'));
-      userEmail = tok.user_email || null;
-    } catch (_) {}
-  }
   res.json({
     oauthConfigured: Boolean(oauthConfig?.client_id && oauthConfig?.client_secret),
-    authenticated: hasTokens,
-    userEmail,
+    authenticated: Boolean(tokens),
+    userEmail: tokens ? tokens.user_email : null,
   });
 });
 
@@ -143,20 +249,28 @@ app.post('/api/auth/google/configure', (req, res) => {
   const config = {
     client_id: clientId.trim(),
     client_secret: clientSecret.trim(),
-    redirect_uris: ['http://localhost:4000/api/auth/google/callback'],
+    redirect_uris: [
+      'https://pdf-downloader-9oux.vercel.app/api/auth/google/callback',
+      'http://localhost:4000/api/auth/google/callback',
+    ],
   };
 
   try {
     fs.writeFileSync(OAUTH_CONFIG_PATH, JSON.stringify(config, null, 2));
     res.json({ success: true, message: 'OAuth credentials saved successfully' });
   } catch (err) {
-    res.status(500).json({ error: `Failed to save credentials: ${err.message}` });
+    try {
+      fs.writeFileSync('/tmp/oauth-credentials.json', JSON.stringify(config, null, 2));
+      res.json({ success: true, message: 'OAuth credentials saved successfully' });
+    } catch (e) {
+      res.status(500).json({ error: `Failed to save credentials: ${err.message}` });
+    }
   }
 });
 
 // OAuth 2.0 Route: Get Google Consent Screen URL
 app.get('/api/auth/google/url', (req, res) => {
-  const oauth2Client = getOAuth2Client();
+  const oauth2Client = getOAuth2Client(req);
   if (!oauth2Client) {
     return res.status(400).json({ error: 'OAuth credentials not configured yet' });
   }
@@ -178,7 +292,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
   const { code } = req.query;
   if (!code) return res.status(400).send('Missing code parameter');
 
-  const oauth2Client = getOAuth2Client();
+  const oauth2Client = getOAuth2Client(req);
   if (!oauth2Client) return res.status(500).send('OAuth client not configured');
 
   try {
@@ -197,7 +311,8 @@ app.get('/api/auth/google/callback', async (req, res) => {
       user_email: email,
       saved_at: new Date().toISOString(),
     };
-    fs.writeFileSync(TOKENS_PATH, JSON.stringify(savedData, null, 2));
+
+    saveUserTokens(res, savedData);
 
     res.redirect('/?auth=success');
   } catch (err) {
@@ -208,9 +323,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
 
 // OAuth 2.0 Route: Disconnect Personal Account
 app.post('/api/auth/google/disconnect', (req, res) => {
-  if (fs.existsSync(TOKENS_PATH)) {
-    fs.unlinkSync(TOKENS_PATH);
-  }
+  clearUserTokens(res);
   res.json({ success: true, message: 'Disconnected Google Account' });
 });
 
@@ -595,7 +708,7 @@ async function searchWebsitePdfs(siteUrl, keyword, folderId, cookie, userAgent, 
 // 1. SCAN & SEARCH ENDPOINT (Universal Book Library OR Custom Site URL)
 app.post('/api/search-pdfs', async (req, res) => {
   const { siteUrl, keyword, folderId, mode = 'library', cookie, userAgent } = req.body;
-  const drive = getDriveClient();
+  const drive = getDriveClient(req);
 
   try {
     // If mode is 'library' or no URL provided or URL is 'library'/'archive.org':
@@ -747,7 +860,7 @@ app.post('/api/check-drive-duplicates', async (req, res) => {
   const { folderId } = req.body;
   if (!folderId) return res.json({ existingFiles: [] });
 
-  const drive = getDriveClient();
+  const drive = getDriveClient(req);
   if (!drive) return res.status(400).json({ error: 'Google Drive service account not configured' });
 
   const existingMap = await getExistingDriveFilesMap(folderId.trim(), drive);
@@ -765,7 +878,7 @@ app.post('/api/upload-drive', async (req, res) => {
     return res.status(400).json({ error: 'No PDFs provided for upload.' });
   }
 
-  const drive = getDriveClient();
+  const drive = getDriveClient(req);
   if (!drive) {
     const errorMsg = 'Google Drive is not connected. Please click "Connect Personal Google Drive" in the header or place service-account.json in the project root.';
     pdfs.forEach(pdf => {
@@ -927,6 +1040,10 @@ app.use((req, res, next) => {
 });
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`Scraper backend and UI running at http://localhost:${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Scraper backend and UI running at http://localhost:${PORT}`);
+  });
+}
+
+export default app;
