@@ -1,0 +1,1408 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PDF Archivist &bull; Universal Book Finder & Dual Streamer</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#fafafa',
+              100: '#f4f4f5',
+              200: '#e4e4e7',
+              300: '#d4d4d8',
+              400: '#a1a1aa',
+              500: '#71717a',
+              600: '#52525b',
+              700: '#3f3f46',
+              800: '#27272a',
+              900: '#18181b',
+              950: '#09090b',
+            }
+          },
+          animation: {
+            'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'fadeIn': 'fadeIn 0.2s ease-in-out forwards',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0', transform: 'translateY(4px)' },
+              '100%': { opacity: '1', transform: 'translateY(0)' },
+            }
+          }
+        }
+      }
+    };
+  </script>
+
+  <!-- React 18 & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- Babel Standalone for in-browser JSX compilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* Custom Minimalist Dark Theme Scrollbars & Glassmorphism */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
+
+    body {
+      background-color: #050505;
+      color: #ededed;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow-x: hidden;
+    }
+
+    .chrome-button {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      transition: all 0.15s ease;
+    }
+    .chrome-button:hover:not(:disabled) {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.08) 100%);
+      border-color: rgba(255, 255, 255, 0.25);
+    }
+    .chrome-button:active:not(:disabled) {
+      transform: translateY(1px);
+    }
+
+    .chrome-subtle-button {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      transition: all 0.15s ease;
+    }
+    .chrome-subtle-button:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.08);
+      border-color: rgba(255, 255, 255, 0.18);
+    }
+  </style>
+</head>
+<body class="selection:bg-zinc-800 selection:text-white">
+  <div id="root"></div>
+
+  <!-- React Application Source -->
+  <script type="text/babel">
+    const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+    // --- Lucide Icons (Inline SVGs) ---
+    const IconSearch = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    );
+
+    const IconBook = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"></path>
+        <path d="M6 6h10"></path>
+        <path d="M6 10h10"></path>
+      </svg>
+    );
+
+    const IconGlobe = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="2" y1="12" x2="22" y2="12"></line>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+      </svg>
+    );
+
+    const IconFolder = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path>
+      </svg>
+    );
+
+    const IconFileText = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+        <line x1="10" y1="9" x2="8" y2="9"></line>
+      </svg>
+    );
+
+    const IconDownload = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>
+    );
+
+    const IconCloudUpload = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"></path>
+        <path d="M12 12v9"></path>
+        <path d="m16 16-4-4-4 4"></path>
+      </svg>
+    );
+
+    const IconExternalLink = ({ size = 16, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+        <polyline points="15 3 21 3 21 9"></polyline>
+        <line x1="10" y1="14" x2="21" y2="3"></line>
+      </svg>
+    );
+
+    const IconArchive = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <rect width="20" height="5" x="2" y="3" rx="1"></rect>
+        <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"></path>
+        <path d="M10 12h4"></path>
+      </svg>
+    );
+
+    const IconAlertCircle = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+    );
+
+    const IconShield = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+      </svg>
+    );
+
+    const IconCheck = ({ size = 16, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    );
+
+    const IconCheckCircle2 = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="12" cy="12" r="10"></circle>
+        <path d="m9 12 2 2 4-4"></path>
+      </svg>
+    );
+
+    const IconLoader2 = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`animate-spin ${className}`}>
+        <path d="M21 12a9 9 0 1 1-6.219-8.56"></path>
+      </svg>
+    );
+
+    const IconSparkles = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"></path>
+      </svg>
+    );
+
+    const IconX = ({ size = 18, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    );
+
+    const IconSettings = ({ size = 16, className = "" }) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+    );
+
+    // Generate a unique session ID per browser tab
+    const SESSION_ID = Math.random().toString(36).substring(2, 12);
+
+    // --- Progress Tracking Hook (SSE + Fetch Streams) ---
+    function usePdfProgress() {
+      const [progressMap, setProgressMap] = useState({});
+
+      useEffect(() => {
+        const eventSource = new EventSource(`/api/progress-stream?sessionId=${SESSION_ID}`);
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            setProgressMap(prev => ({
+              ...prev,
+              [data.url]: { ...prev[data.url], ...data }
+            }));
+          } catch (_) {}
+        };
+        return () => eventSource.close();
+      }, []);
+
+      const downloadLocalWithProgress = async (pdf) => {
+        setProgressMap(prev => ({
+          ...prev,
+          [pdf.url]: { status: 'downloading-local', progress: 0 }
+        }));
+
+        try {
+          const res = await fetch(`/api/download-local?url=${encodeURIComponent(pdf.url)}&filename=${encodeURIComponent(pdf.filename)}`);
+          if (!res.ok || !res.body) throw new Error('Download stream failed');
+
+          const totalBytes = parseInt(res.headers.get('Content-Length') || '0', 10) || pdf.sizeBytes || 0;
+          const reader = res.body.getReader();
+          const chunks = [];
+          let receivedBytes = 0;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              chunks.push(value);
+              receivedBytes += value.length;
+              if (totalBytes > 0) {
+                const percent = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+                setProgressMap(prev => ({
+                  ...prev,
+                  [pdf.url]: {
+                    status: 'downloading-local',
+                    progress: percent,
+                    transferredMB: (receivedBytes / (1024 * 1024)).toFixed(2),
+                  }
+                }));
+              } else {
+                setProgressMap(prev => ({
+                  ...prev,
+                  [pdf.url]: {
+                    status: 'downloading-local',
+                    progress: null,
+                    transferredMB: (receivedBytes / (1024 * 1024)).toFixed(2),
+                  }
+                }));
+              }
+            }
+          }
+
+          const blob = new Blob(chunks, { type: 'application/pdf' });
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = pdf.filename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+
+          setProgressMap(prev => ({
+            ...prev,
+            [pdf.url]: { status: 'saved-local', progress: 100 }
+          }));
+        } catch (err) {
+          setProgressMap(prev => ({
+            ...prev,
+            [pdf.url]: { status: 'failed', progress: 0, error: err.message }
+          }));
+        }
+      };
+
+      return { progressMap, downloadLocalWithProgress, sessionId: SESSION_ID };
+    }
+
+    // --- Main Application Component ---
+    function App() {
+      const { progressMap, downloadLocalWithProgress, sessionId } = usePdfProgress();
+
+      // Search Mode: 'library' (Universal Book Search) vs 'site' (Website Scanner)
+      const [searchMode, setSearchMode] = useState('library');
+
+      // Inputs
+      const [searchQuery, setSearchQuery] = useState('');
+      const [siteUrl, setSiteUrl] = useState('');
+      const [folderId, setFolderId] = useState('');
+      const [customCookie, setCustomCookie] = useState('');
+      const [showAdvanced, setShowAdvanced] = useState(false);
+
+      // Results & Selection
+      const [results, setResults] = useState([]);
+      const [selectedUrls, setSelectedUrls] = useState(new Set());
+      const [filterQuery, setFilterQuery] = useState('');
+
+      // Loading states
+      const [isSearching, setIsSearching] = useState(false);
+      const [isZipping, setIsZipping] = useState(false);
+      const [isBulkUploading, setIsBulkUploading] = useState(false);
+
+      // Status & Alerts
+      const [serverStatus, setServerStatus] = useState({ loaded: false, driveConfigured: false });
+      const [bannerMessage, setBannerMessage] = useState(null);
+      const [cloudflareError, setCloudflareError] = useState(null);
+      const [showHelpModal, setShowHelpModal] = useState(false);
+
+      // Restore folderId & initial status
+      useEffect(() => {
+        const savedFolder = localStorage.getItem('pdf_drive_folder_id');
+        if (savedFolder) setFolderId(savedFolder);
+
+        fetch('/api/status')
+          .then(res => res.json())
+          .then(data => setServerStatus({ loaded: true, driveConfigured: data.serviceAccountConfigured }))
+          .catch(() => setServerStatus({ loaded: true, driveConfigured: false }));
+      }, []);
+
+      const handleFolderChange = (val) => {
+        setFolderId(val);
+        localStorage.setItem('pdf_drive_folder_id', val.trim());
+      };
+
+      // Search Handler
+      const handleSearch = async (e, overrideKeyword, overrideMode) => {
+        if (e && e.preventDefault) e.preventDefault();
+
+        const activeMode = overrideMode || searchMode;
+        const kw = overrideKeyword !== undefined ? overrideKeyword : (activeMode === 'library' ? searchQuery : searchQuery);
+
+        if (activeMode === 'site' && !siteUrl.trim()) {
+          setBannerMessage({ type: 'error', text: 'Please enter a target site URL to scan.' });
+          return;
+        }
+
+        setIsSearching(true);
+        setBannerMessage(null);
+        setCloudflareError(null);
+        setSelectedUrls(new Set());
+
+        try {
+          const bodyPayload = {
+            mode: activeMode,
+            keyword: kw.trim(),
+            folderId: folderId.trim() || undefined,
+            cookie: customCookie.trim() || undefined,
+          };
+
+          if (activeMode === 'site') {
+            bodyPayload.siteUrl = siteUrl.trim();
+          }
+
+          const res = await fetch('/api/search-pdfs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bodyPayload)
+          });
+
+          const data = await res.json();
+
+          if (!res.ok) {
+            if (data.isCloudflareProtected) {
+              setCloudflareError({
+                hostname: data.hostname || siteUrl,
+                keyword: kw,
+                message: data.error,
+              });
+              return;
+            }
+            throw new Error(data.error || 'Failed to scan website');
+          }
+
+          const initializedPdfs = (data.pdfs || []).map(pdf => ({
+            ...pdf,
+            status: pdf.existsInDrive ? 'success' : 'idle',
+            driveLink: pdf.driveLink || null,
+            alreadyExists: Boolean(pdf.existsInDrive),
+            errorMsg: null,
+          }));
+
+          setResults(initializedPdfs);
+          setSelectedUrls(new Set(initializedPdfs.map(p => p.url)));
+
+          const alreadyInDriveCount = initializedPdfs.filter(p => p.existsInDrive).length;
+
+          if (initializedPdfs.length === 0) {
+            setBannerMessage({
+              type: 'info',
+              text: `No matching PDF books found for "${kw}". Try another keyword or author.`
+            });
+          } else {
+            setBannerMessage({
+              type: 'success',
+              text: `Found ${initializedPdfs.length} PDF books!${alreadyInDriveCount > 0 ? ` (${alreadyInDriveCount} already archived in your Drive folder)` : ''} Ready to download or stream.`
+            });
+          }
+        } catch (err) {
+          setBannerMessage({ type: 'error', text: err.message });
+        } finally {
+          setIsSearching(false);
+        }
+      };
+
+      // Quick fallback: Switch to Universal Library and search
+      const switchToLibraryAndSearch = (kw) => {
+        setSearchMode('library');
+        setSearchQuery(kw);
+        setCloudflareError(null);
+        handleSearch(null, kw, 'library');
+      };
+
+      // Selection Handlers
+      const toggleSelect = (url) => {
+        const next = new Set(selectedUrls);
+        if (next.has(url)) next.delete(url);
+        else next.add(url);
+        setSelectedUrls(next);
+      };
+
+      const selectAll = () => setSelectedUrls(new Set(filteredResults.map(p => p.url)));
+      const deselectAll = () => setSelectedUrls(new Set());
+      const selectUnsavedOnly = () => {
+        const unsavedUrls = results.filter(p => !p.existsInDrive).map(p => p.url);
+        setSelectedUrls(new Set(unsavedUrls));
+      };
+
+      const filteredResults = useMemo(() => {
+        if (!filterQuery.trim()) return results;
+        const q = filterQuery.toLowerCase();
+        return results.filter(p =>
+          (p.title || '').toLowerCase().includes(q) ||
+          (p.filename || '').toLowerCase().includes(q) ||
+          (p.author || '').toLowerCase().includes(q)
+        );
+      }, [results, filterQuery]);
+
+      const selectedCount = selectedUrls.size;
+      const allSelected = filteredResults.length > 0 && selectedCount === filteredResults.length;
+      const unsavedCount = useMemo(() => results.filter(p => !p.existsInDrive).length, [results]);
+
+      const totalSelectedBytes = useMemo(() => {
+        let total = 0;
+        for (const item of results) {
+          if (selectedUrls.has(item.url) && item.sizeBytes) {
+            total += item.sizeBytes;
+          }
+        }
+        return total;
+      }, [results, selectedUrls]);
+
+      const totalSelectedMB = (totalSelectedBytes / (1024 * 1024)).toFixed(2);
+
+      // Bulk Action 1: Download Selected as .ZIP
+      const handleBulkDownloadZip = async () => {
+        const itemsToDownload = results.filter(p => selectedUrls.has(p.url));
+        if (!itemsToDownload.length) return;
+
+        setIsZipping(true);
+        setBannerMessage({ type: 'info', text: `Packaging ${itemsToDownload.length} PDFs into books-bundle.zip...` });
+
+        try {
+          const res = await fetch('/api/download-zip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pdfs: itemsToDownload.map(p => ({ url: p.url, filename: p.filename })),
+              cookie: customCookie || undefined,
+            })
+          });
+
+          if (!res.ok) throw new Error('Failed to generate ZIP archive.');
+
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'books-bundle.zip';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+
+          setBannerMessage({ type: 'success', text: `Downloaded ${itemsToDownload.length} books in books-bundle.zip!` });
+        } catch (err) {
+          setBannerMessage({ type: 'error', text: err.message });
+        } finally {
+          setIsZipping(false);
+        }
+      };
+
+      // Bulk Action 2: Save Selected to Google Drive
+      const handleBulkUploadDrive = async () => {
+        const itemsToUpload = results.filter(p => selectedUrls.has(p.url));
+        if (!itemsToUpload.length) return;
+
+        setIsBulkUploading(true);
+        setBannerMessage({ type: 'info', text: `Streaming ${itemsToUpload.length} books to Google Drive with duplicate checks...` });
+
+        try {
+          const res = await fetch('/api/upload-drive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pdfs: itemsToUpload.map(p => ({
+                url: p.url,
+                filename: p.filename,
+                sizeBytes: p.sizeBytes,
+              })),
+              folderId: folderId.trim() || undefined,
+              sessionId,
+              forceOverwrite: false,
+              cookie: customCookie || undefined,
+            })
+          });
+
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Bulk Drive upload failed.');
+
+          let uploadedCount = 0;
+          let skippedCount = 0;
+
+          setResults(prev => prev.map(p => {
+            const match = (data.results || []).find(r => r.url === p.url);
+            if (match) {
+              if (match.status === 'success') uploadedCount++;
+              if (match.status === 'skipped-duplicate') skippedCount++;
+              return {
+                ...p,
+                status: match.status,
+                driveLink: match.link || p.driveLink,
+                alreadyExists: match.status === 'skipped-duplicate' || p.alreadyExists,
+                errorMsg: match.error || null,
+              };
+            }
+            return p;
+          }));
+
+          let summary = `Finished! Uploaded ${uploadedCount} books to Google Drive.`;
+          if (skippedCount > 0) summary += ` (${skippedCount} already existed & were skipped).`;
+          setBannerMessage({ type: 'success', text: summary });
+        } catch (err) {
+          setBannerMessage({ type: 'error', text: err.message });
+        } finally {
+          setIsBulkUploading(false);
+        }
+      };
+
+      // Single Item Action: Save to Drive
+      const handleSingleUploadDrive = async (item, forceOverwrite = false) => {
+        setResults(prev => prev.map(p => p.url === item.url ? { ...p, status: 'uploading', errorMsg: null } : p));
+
+        try {
+          const res = await fetch('/api/upload-drive', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pdfs: [{
+                url: item.url,
+                filename: item.filename,
+                sizeBytes: item.sizeBytes,
+              }],
+              folderId: folderId.trim() || undefined,
+              sessionId,
+              forceOverwrite,
+              cookie: customCookie || undefined,
+            })
+          });
+
+          const data = await res.json();
+          const uploadResult = data.results && data.results[0];
+
+          if (!res.ok || !uploadResult || (uploadResult.status !== 'success' && uploadResult.status !== 'skipped-duplicate')) {
+            const msg = (uploadResult && uploadResult.error) || data.error || 'Upload failed';
+            setResults(prev => prev.map(p => p.url === item.url ? { ...p, status: 'failed', errorMsg: msg } : p));
+            setBannerMessage({ type: 'error', text: `Failed to upload "${item.filename}": ${msg}` });
+            return;
+          }
+
+          setResults(prev => prev.map(p => p.url === item.url ? {
+            ...p,
+            status: uploadResult.status,
+            driveLink: uploadResult.link,
+            alreadyExists: uploadResult.status === 'skipped-duplicate' || p.alreadyExists,
+            errorMsg: null,
+          } : p));
+
+          const successText = uploadResult.status === 'skipped-duplicate'
+            ? `"${item.filename}" is already in your Google Drive folder (duplicate skipped).`
+            : `Saved "${item.filename}" to Google Drive!`;
+          setBannerMessage({ type: 'success', text: successText });
+        } catch (err) {
+          setResults(prev => prev.map(p => p.url === item.url ? { ...p, status: 'failed', errorMsg: err.message } : p));
+          setBannerMessage({ type: 'error', text: `Error uploading "${item.filename}": ${err.message}` });
+        }
+      };
+
+      return (
+        <div className="max-w-6xl mx-auto px-4 py-8 md:py-12 flex flex-col min-h-screen">
+          
+          {/* Header */}
+          <header className="flex flex-col md:flex-row md:items-center justify-between pb-8 mb-8 border-b border-white/10 gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-white/20 to-white/5 border border-white/20 flex items-center justify-center shadow-lg shadow-white/5">
+                  <IconFileText size={20} className="text-white" />
+                </div>
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-white flex items-center gap-2">
+                    PDF ARCHIVIST
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-zinc-300 font-mono font-normal">v2.0</span>
+                  </h1>
+                  <p className="text-xs md:text-sm text-zinc-400 mt-0.5">
+                    Universal Book & PDF Downloader &bull; Local Streaming & Google Drive Archive
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Status & Guide Pill */}
+            <div className="flex items-center gap-3 self-start md:self-auto">
+              <button
+                onClick={() => setShowHelpModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium chrome-subtle-button"
+                title="Service Account & Usage Guide"
+              >
+                <IconSparkles size={14} className="text-zinc-300" />
+                <span>Drive Guide</span>
+              </button>
+
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs">
+                <span className={`w-2 h-2 rounded-full ${serverStatus.driveConfigured ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]' : 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]'}`} />
+                <span className="text-zinc-300">
+                  {serverStatus.driveConfigured ? 'Google Drive Ready' : 'service-account.json Pending'}
+                </span>
+              </div>
+            </div>
+          </header>
+
+          {/* Interactive Cloudflare 403 Alert with 1-Click Fallback */}
+          {cloudflareError && (
+            <div className="mb-6 p-5 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200 shadow-2xl animate-fadeIn">
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0 mt-0.5">
+                    <IconShield size={20} />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm text-amber-100 flex items-center gap-2">
+                      Access Blocked by Cloudflare Bot Defense (HTTP 403)
+                    </h4>
+                    <p className="text-xs text-amber-300/90 mt-1 max-w-2xl leading-relaxed">
+                      <strong>{cloudflareError.hostname}</strong> enforces Cloudflare Turnstile verification. Automated scrapers cannot bypass its firewall without clearance cookies.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 shrink-0 w-full md:w-auto">
+                  {cloudflareError.keyword && (
+                    <button
+                      onClick={() => switchToLibraryAndSearch(cloudflareError.keyword)}
+                      className="flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-semibold bg-white text-black hover:bg-zinc-200 transition shadow-lg flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <IconSparkles size={14} className="text-black" />
+                      <span>Search "{cloudflareError.keyword}" in Universal Library</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setShowAdvanced(true); setCloudflareError(null); }}
+                    className="px-3 py-2 rounded-xl text-xs font-medium bg-white/10 hover:bg-white/20 text-white transition cursor-pointer"
+                  >
+                    Paste Cookie
+                  </button>
+                  <button
+                    onClick={() => setCloudflareError(null)}
+                    className="p-2 text-amber-400 hover:text-white"
+                  >
+                    <IconX size={16} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Banner notification */}
+          {bannerMessage && (
+            <div className={`mb-6 p-4 rounded-xl border flex items-start justify-between gap-3 text-sm transition-all animate-fadeIn ${
+              bannerMessage.type === 'error'
+                ? 'bg-rose-950/40 border-rose-500/30 text-rose-200'
+                : bannerMessage.type === 'success'
+                ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+                : bannerMessage.type === 'warning'
+                ? 'bg-amber-950/40 border-amber-500/30 text-amber-200'
+                : 'bg-zinc-900/80 border-white/15 text-zinc-200'
+            }`}>
+              <div className="flex items-center gap-2.5">
+                {bannerMessage.type === 'error' && <IconAlertCircle size={18} className="text-rose-400 shrink-0" />}
+                {bannerMessage.type === 'success' && <IconCheckCircle2 size={18} className="text-emerald-400 shrink-0" />}
+                {bannerMessage.type === 'warning' && <IconAlertCircle size={18} className="text-amber-400 shrink-0" />}
+                {bannerMessage.type === 'info' && <IconLoader2 size={18} className="text-zinc-400 shrink-0" />}
+                <span>{bannerMessage.text}</span>
+              </div>
+              <button onClick={() => setBannerMessage(null)} className="text-zinc-400 hover:text-white transition">
+                <IconX size={16} />
+              </button>
+            </div>
+          )}
+
+          {/* Mode Tabs */}
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              onClick={() => { setSearchMode('library'); setBannerMessage(null); }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                searchMode === 'library'
+                  ? 'bg-white text-black shadow-lg shadow-white/10'
+                  : 'bg-white/5 text-zinc-400 hover:text-white border border-white/5 hover:bg-white/10'
+              }`}
+            >
+              <IconBook size={15} />
+              <span>Universal Book Search (250,000+ Titles)</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${searchMode === 'library' ? 'bg-black/10 text-zinc-800' : 'bg-emerald-500/20 text-emerald-300'}`}>Direct Download</span>
+            </button>
+
+            <button
+              onClick={() => { setSearchMode('site'); setBannerMessage(null); }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                searchMode === 'site'
+                  ? 'bg-white text-black shadow-lg shadow-white/10'
+                  : 'bg-white/5 text-zinc-400 hover:text-white border border-white/5 hover:bg-white/10'
+              }`}
+            >
+              <IconGlobe size={15} />
+              <span>Custom Website Scanner</span>
+            </button>
+          </div>
+
+          {/* Search Panel (Glassmorphic Container) */}
+          <section className="bg-white/5 backdrop-blur-md border border-white/10 rounded-2xl p-6 md:p-8 mb-8 shadow-2xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
+
+            <form onSubmit={handleSearch} className="space-y-4 relative z-10">
+              
+              {searchMode === 'library' ? (
+                // MODE 1: Universal Book Library Search
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                  <div className="md:col-span-8 space-y-1.5">
+                    <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                      <IconSearch size={14} className="text-zinc-400" />
+                      Search Books (Title, Author, or Keyword)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="e.g. Alex, Dune, Steve Jobs, Calculus, Psychology, Malcolm X..."
+                        required
+                        className="w-full px-4 py-3 bg-black/60 border border-white/20 rounded-xl text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-white/50 focus:ring-1 focus:ring-white/40 transition"
+                      />
+                      {searchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="absolute right-3 top-3 text-zinc-400 hover:text-white"
+                        >
+                          <IconX size={16} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-4 space-y-1.5">
+                    <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400 flex items-center gap-1.5 justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <IconFolder size={14} className="text-zinc-400" />
+                        Drive Folder ID
+                      </span>
+                      <span className="text-[10px] text-zinc-500 lowercase">saved</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={folderId}
+                        onChange={(e) => handleFolderChange(e.target.value)}
+                        placeholder="Optional Google Drive Folder ID"
+                        className="w-full px-3.5 py-3 bg-black/60 border border-white/15 rounded-xl text-white placeholder-zinc-500 text-xs focus:outline-none focus:border-white/40 font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                // MODE 2: Custom Website Scanner
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                    <div className="md:col-span-6 space-y-1.5">
+                      <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                        <IconGlobe size={14} className="text-zinc-400" />
+                        Target Site URL
+                      </label>
+                      <input
+                        type="text"
+                        value={siteUrl}
+                        onChange={(e) => setSiteUrl(e.target.value)}
+                        placeholder="e.g. https://openstax.org/subjects or your site"
+                        required
+                        className="w-full px-3.5 py-2.5 bg-black/50 border border-white/15 rounded-xl text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-white/40 font-mono"
+                      />
+                    </div>
+
+                    <div className="md:col-span-3 space-y-1.5">
+                      <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400">
+                        Keyword Filter (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="e.g. physics"
+                        className="w-full px-3.5 py-2.5 bg-black/50 border border-white/15 rounded-xl text-white placeholder-zinc-500 text-sm focus:outline-none focus:border-white/40 font-mono"
+                      />
+                    </div>
+
+                    <div className="md:col-span-3 space-y-1.5">
+                      <label className="block text-xs font-medium uppercase tracking-wider text-zinc-400 flex items-center justify-between">
+                        <span>Drive Folder ID</span>
+                        <span className="text-[10px] text-zinc-500">saved</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={folderId}
+                        onChange={(e) => handleFolderChange(e.target.value)}
+                        placeholder="Optional Folder ID"
+                        className="w-full px-3.5 py-2.5 bg-black/50 border border-white/15 rounded-xl text-white placeholder-zinc-500 text-xs focus:outline-none focus:border-white/40 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Expandable Advanced Cloudflare & Cookie Drawer */}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5 transition"
+                    >
+                      <IconSettings size={13} />
+                      <span>{showAdvanced ? 'Hide Cloudflare & Cookie Settings' : 'Bypass Protected Sites (Cookies & Headers)'}</span>
+                    </button>
+
+                    {showAdvanced && (
+                      <div className="mt-3 p-4 rounded-xl bg-black/40 border border-white/10 space-y-3 animate-fadeIn">
+                        <div>
+                          <label className="block text-xs font-medium text-zinc-300 mb-1">
+                            Browser Cookie (<code className="text-amber-300">cf_clearance</code> or session token)
+                          </label>
+                          <input
+                            type="text"
+                            value={customCookie}
+                            onChange={(e) => setCustomCookie(e.target.value)}
+                            placeholder="cf_clearance=abc123...; PHPSESSID=xyz..."
+                            className="w-full px-3 py-2 bg-black/80 border border-white/15 rounded-lg text-xs text-white placeholder-zinc-600 font-mono focus:outline-none focus:border-white/40"
+                          />
+                          <p className="text-[11px] text-zinc-500 mt-1">
+                            If scraping a Cloudflare site like OceanofPDF, open your browser DevTools (F12 &rarr; Application &rarr; Cookies), copy <code className="text-zinc-400">cf_clearance</code>, and paste it here.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Submit Button & Suggested Searches */}
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-2 text-xs text-zinc-400 flex-wrap">
+                  <span className="text-zinc-500">Popular:</span>
+                  {['alex', 'steve jobs', 'clean code', 'dune', 'calculus'].map((kw) => (
+                    <button
+                      key={kw}
+                      type="button"
+                      onClick={() => {
+                        setSearchMode('library');
+                        setSearchQuery(kw);
+                        handleSearch(null, kw, 'library');
+                      }}
+                      className="px-2 py-0.5 rounded bg-white/5 hover:bg-white/15 text-zinc-300 transition text-[11px]"
+                    >
+                      {kw}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSearching}
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-xl font-medium text-sm chrome-button flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {isSearching ? (
+                    <>
+                      <IconLoader2 size={16} />
+                      <span>{searchMode === 'library' ? 'Searching 250k+ Books...' : 'Scanning site & subpages...'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <IconSearch size={16} />
+                      <span>{searchMode === 'library' ? 'Search Books' : 'Scan Website'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {/* Results Area */}
+          {results.length > 0 && (
+            <div className="space-y-4">
+              
+              {/* Sticky Bulk Action Bar */}
+              <div className="sticky top-4 z-20 bg-[#0A0A0A]/90 backdrop-blur-xl border border-white/15 rounded-2xl p-4 shadow-2xl transition-all">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  
+                  {/* Left: Select All & Count */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={() => (allSelected ? deselectAll() : selectAll())}
+                        className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-white focus:ring-0 focus:ring-offset-0 cursor-pointer accent-white"
+                      />
+                      <span className="text-sm font-medium text-white">
+                        {allSelected ? 'Deselect All' : 'Select All'}
+                      </span>
+                    </label>
+
+                    {results.some(p => p.existsInDrive) && (
+                      <button
+                        type="button"
+                        onClick={selectUnsavedOnly}
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/30 text-emerald-300 transition cursor-pointer"
+                        title="Select only PDFs that aren't already archived in your Google Drive folder"
+                      >
+                        Select Unsaved Only ({unsavedCount})
+                      </button>
+                    )}
+
+                    <div className="h-4 w-[1px] bg-white/15 hidden sm:block" />
+
+                    <div className="text-xs font-mono text-zinc-300 flex items-center gap-2">
+                      <div>
+                        Selected: <span className="text-white font-bold">{selectedCount}</span> {selectedCount === 1 ? 'book' : 'books'}
+                        {totalSelectedBytes > 0 && (
+                          <span className="text-zinc-400"> &bull; <span className="text-white font-bold font-mono">{totalSelectedMB} MB</span></span>
+                        )}
+                        <span className="text-zinc-500 text-[11px] ml-1.5">({results.length} found)</span>
+                      </div>
+                    </div>
+
+                    {/* Filter in-page */}
+                    <div className="hidden lg:block ml-2 relative">
+                      <input
+                        type="text"
+                        value={filterQuery}
+                        onChange={(e) => setFilterQuery(e.target.value)}
+                        placeholder="Filter list..."
+                        className="px-2.5 py-1 bg-black/40 border border-white/10 rounded-lg text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white/30"
+                      />
+                      {filterQuery && (
+                        <button onClick={() => setFilterQuery('')} className="absolute right-2 top-1.5 text-zinc-400 hover:text-white">
+                          <IconX size={12} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right: Dual Bulk Download/Upload Actions */}
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <button
+                      onClick={handleBulkDownloadZip}
+                      disabled={selectedCount === 0 || isZipping}
+                      className="px-4 py-2 rounded-xl text-xs font-medium chrome-subtle-button flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      title="Stream all selected PDFs as a single ZIP archive to device"
+                    >
+                      {isZipping ? <IconLoader2 size={14} /> : <IconArchive size={14} className="text-zinc-200" />}
+                      <span>Download Selected (.ZIP)</span>
+                    </button>
+
+                    <button
+                      onClick={handleBulkUploadDrive}
+                      disabled={selectedCount === 0 || isBulkUploading}
+                      className="px-4 py-2 rounded-xl text-xs font-medium chrome-button flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      title="Directly stream selected PDFs to Google Drive"
+                    >
+                      {isBulkUploading ? <IconLoader2 size={14} /> : <IconCloudUpload size={14} />}
+                      <span>Save Selected to Google Drive</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Results List */}
+              <div className="space-y-3">
+                {filteredResults.map((pdf, index) => {
+                  const isChecked = selectedUrls.has(pdf.url);
+                  const itemState = progressMap[pdf.url];
+                  const prog = itemState || {};
+                  const effectiveStatus = prog.status || pdf.status || 'idle';
+                  const effectiveProgress = prog.progress !== undefined ? prog.progress : pdf.progress;
+                  const effectiveTransferredMB = prog.transferredMB !== undefined ? prog.transferredMB : pdf.transferredMB;
+                  const effectiveDriveLink = prog.link || pdf.driveLink;
+                  const effectiveErrorMsg = prog.error || pdf.errorMsg;
+
+                  return (
+                    <div
+                      key={pdf.url + index}
+                      className={`group bg-white/5 backdrop-blur-md border rounded-xl p-4 transition-all hover:bg-white/[0.07] ${
+                        isChecked ? 'border-white/20 bg-white/[0.06]' : 'border-white/5'
+                      }`}
+                    >
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        
+                        {/* Book Metadata & Checkbox */}
+                        <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                          <div className="pt-1.5">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleSelect(pdf.url)}
+                              className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-white focus:ring-0 focus:ring-offset-0 cursor-pointer accent-white"
+                            />
+                          </div>
+
+                          {/* Optional Book Cover */}
+                          {pdf.coverUrl ? (
+                            <img
+                              src={pdf.coverUrl}
+                              alt=""
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                              className="w-12 h-16 object-cover rounded-lg bg-zinc-800 border border-white/10 shrink-0 shadow-md hidden sm:block"
+                            />
+                          ) : (
+                            <div className="w-10 h-12 rounded-lg bg-white/5 border border-white/10 shrink-0 hidden sm:flex items-center justify-center text-zinc-500">
+                              <IconFileText size={18} />
+                            </div>
+                          )}
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="text-sm font-semibold text-white tracking-tight truncate max-w-xl" title={pdf.title}>
+                                {pdf.title}
+                              </h3>
+
+                              {(pdf.existsInDrive || itemState?.status === 'skipped-duplicate') && (
+                                <a
+                                  href={itemState?.link || pdf.driveLink}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-0.5 text-xs font-medium rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition flex items-center gap-1.5"
+                                  title="Click to view file in Google Drive"
+                                >
+                                  <span>✓ Already in Drive</span>
+                                  <IconExternalLink size={11} className="opacity-70" />
+                                </a>
+                              )}
+
+                              {((!pdf.existsInDrive && itemState?.status !== 'skipped-duplicate') || effectiveStatus === 'downloading-local' || effectiveStatus === 'saved-local') && (
+                                <StatusBadge
+                                  status={effectiveStatus}
+                                  driveLink={effectiveDriveLink}
+                                  errorMsg={effectiveErrorMsg}
+                                  progress={effectiveProgress}
+                                  transferredMB={effectiveTransferredMB}
+                                />
+                              )}
+                            </div>
+
+                            {/* Author & Year (if available) */}
+                            {pdf.author && (
+                              <div className="text-xs text-zinc-400 mt-0.5">
+                                by <span className="text-zinc-200">{pdf.author}</span> {pdf.year ? `(${pdf.year})` : ''}
+                              </div>
+                            )}
+
+                            <div className="flex items-center gap-2 mt-1.5 text-xs text-zinc-400 font-mono flex-wrap">
+                              <span className="flex items-center gap-1 text-zinc-300 bg-white/5 px-2 py-0.5 rounded border border-white/5 truncate max-w-xs">
+                                <IconFileText size={12} className="text-zinc-400 shrink-0" />
+                                <span className="truncate">{pdf.filename}</span>
+                              </span>
+
+                              {pdf.sizeFormatted && (
+                                <span className="px-2.5 py-0.5 text-xs font-mono rounded-full bg-white/10 text-zinc-300 border border-white/10">
+                                  {pdf.sizeFormatted}
+                                </span>
+                              )}
+
+                              <a
+                                href={pdf.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="truncate max-w-xs text-zinc-500 hover:text-zinc-300 underline underline-offset-2 transition text-[11px]"
+                                title={pdf.url}
+                              >
+                                {pdf.url}
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+                          <button
+                            onClick={() => downloadLocalWithProgress(pdf)}
+                            disabled={effectiveStatus === 'downloading-local'}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium chrome-subtle-button flex items-center gap-1.5 disabled:opacity-50 transition"
+                            title="Download file directly with live byte & percentage tracking"
+                          >
+                            {effectiveStatus === 'downloading-local' ? (
+                              <IconLoader2 size={13} className="animate-spin text-sky-400" />
+                            ) : (
+                              <IconDownload size={13} className="text-zinc-300" />
+                            )}
+                            <span>Download Local</span>
+                          </button>
+
+                          {pdf.existsInDrive || itemState?.status === 'skipped-duplicate' ? (
+                            <button
+                              onClick={() => handleSingleUploadDrive(pdf, true)}
+                              disabled={effectiveStatus === 'uploading'}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 border border-amber-500/30 text-amber-300 flex items-center gap-1.5 disabled:opacity-50 transition cursor-pointer"
+                              title="Force re-upload this file and overwrite in Google Drive"
+                            >
+                              {effectiveStatus === 'uploading' ? (
+                                <IconLoader2 size={13} className="animate-spin text-amber-400" />
+                              ) : (
+                                <IconCloudUpload size={13} className="text-amber-400" />
+                              )}
+                              <span>Re-upload (Overwrite)</span>
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleSingleUploadDrive(pdf, false)}
+                              disabled={effectiveStatus === 'uploading'}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-800 hover:bg-zinc-700 border border-white/10 text-white flex items-center gap-1.5 disabled:opacity-50 transition cursor-pointer"
+                              title="Stream single file straight to Google Drive"
+                            >
+                              {effectiveStatus === 'uploading' ? (
+                                <IconLoader2 size={13} className="animate-spin text-amber-400" />
+                              ) : (
+                                <IconCloudUpload size={13} className="text-zinc-300" />
+                              )}
+                              <span>Save to Drive</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Real-time Progress Bar */}
+                      {itemState && (
+                        <div className="w-full mt-3 pt-2.5 border-t border-white/5 animate-fadeIn">
+                          <div className="flex justify-between items-center text-xs font-mono text-zinc-400 mb-1.5">
+                            <span className="flex items-center gap-1.5">
+                              <span>
+                                {itemState.status === 'uploading' && 'Uploading to Google Drive...'}
+                                {itemState.status === 'downloading-local' && 'Downloading to Device...'}
+                                {itemState.status === 'success' && (itemState.alreadyExists ? 'Already in Google Drive (Skipped redundant upload)' : 'Saved to Google Drive')}
+                                {itemState.status === 'skipped-duplicate' && 'Already in Google Drive (Duplicate skipped)'}
+                                {itemState.status === 'saved-local' && 'Saved to Device'}
+                                {itemState.status === 'failed' && `Error: ${itemState.error || 'Failed'}`}
+                              </span>
+                              {itemState.transferredMB && (
+                                <span className="text-[11px] text-zinc-300 font-semibold">({itemState.transferredMB} MB transferred)</span>
+                              )}
+                            </span>
+                            <span className="font-semibold text-white">{itemState.progress ?? 0}%</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-zinc-400 to-white transition-all duration-200"
+                              style={{ width: `${itemState.progress || 0}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Empty State */}
+          {results.length === 0 && !isSearching && !cloudflareError && (
+            <div className="flex-1 flex flex-col items-center justify-center py-16 text-center border border-dashed border-white/10 rounded-2xl bg-white/[0.01]">
+              <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 text-zinc-400">
+                <IconSearch size={24} />
+              </div>
+              <h3 className="text-base font-semibold text-white">Universal PDF Archivist</h3>
+              <p className="text-xs md:text-sm text-zinc-500 max-w-md mt-1 mb-6">
+                Type any book title, author, or keyword (e.g. <strong>Alex</strong>, <strong>Dune</strong>, <strong>Steve Jobs</strong>) above to instantly search 250,000+ full-text PDF books.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-xl text-left text-xs">
+                <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div className="font-semibold text-zinc-300 mb-1">1. 250k+ Open Books</div>
+                  <div className="text-zinc-500">Instant PDF downloads with book covers, author metadata, and exact sizes.</div>
+                </div>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div className="font-semibold text-zinc-300 mb-1">2. Local ZIP Stream</div>
+                  <div className="text-zinc-500">Stream all selected books bundled on the fly into a single .ZIP file.</div>
+                </div>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/5">
+                  <div className="font-semibold text-zinc-300 mb-1">3. Direct Drive Push</div>
+                  <div className="text-zinc-500">Streams binary data straight from remote host to Drive with duplicate protection.</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Help Modal */}
+          {showHelpModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-[#121212] border border-white/15 rounded-2xl p-6 md:p-8 max-w-lg w-full shadow-2xl relative">
+                <button
+                  onClick={() => setShowHelpModal(false)}
+                  className="absolute top-4 right-4 text-zinc-400 hover:text-white"
+                >
+                  <IconX size={18} />
+                </button>
+
+                <h3 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+                  <IconCloudUpload size={20} className="text-white" />
+                  Google Drive Setup Instructions
+                </h3>
+
+                <p className="text-xs text-zinc-400 mb-4">
+                  To save PDFs straight to Google Drive without holding files on your server:
+                </p>
+
+                <ol className="list-decimal list-inside space-y-2.5 text-xs text-zinc-300">
+                  <li>
+                    <strong>Google Cloud Console:</strong> Create a Project, enable the <em>Google Drive API</em>, and create a <em>Service Account</em>.
+                  </li>
+                  <li>
+                    <strong>Download Key:</strong> Download the Service Account JSON key and rename it to:
+                    <code className="block mt-1 font-mono bg-white/10 p-1.5 rounded text-white text-[11px]">
+                      service-account.json
+                    </code>
+                    Place it in the root folder alongside <code className="text-zinc-200">index.js</code>.
+                  </li>
+                  <li>
+                    <strong>Share Google Drive Folder:</strong> Open your Google Drive, right-click the target folder &rarr; <em>Share</em>, and paste the service account's <code className="text-emerald-300">client_email</code> as <strong>Editor</strong>.
+                  </li>
+                  <li>
+                    <strong>Folder ID:</strong> Copy the folder ID from the URL (e.g. <code className="text-zinc-400">drive.google.com/drive/folders/<b>YOUR_FOLDER_ID</b></code>) and paste it into the <strong>Drive Folder ID</strong> input.
+                  </li>
+                </ol>
+
+                <div className="mt-6 pt-4 border-t border-white/10 flex justify-end">
+                  <button
+                    onClick={() => setShowHelpModal(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-medium chrome-button"
+                  >
+                    Got It
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Footer */}
+          <footer className="mt-auto pt-8 border-t border-white/5 text-center text-xs text-zinc-600">
+            PDF Archivist &bull; Minimalist Dark Mode &bull; Express + React + Tailwind + Lucide
+          </footer>
+        </div>
+      );
+    }
+
+    // Status Badge Helper
+    function StatusBadge({ status, driveLink, errorMsg, progress, transferredMB }) {
+      if (status === 'uploading') {
+        const hasPercent = typeof progress === 'number' && progress > 0;
+        return (
+          <div className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium bg-amber-950/60 text-amber-300 border border-amber-500/40">
+              <IconLoader2 size={11} className="animate-spin text-amber-300 shrink-0" />
+              <span>Uploading{hasPercent ? ` ${progress}%` : '...'}</span>
+              {transferredMB && (
+                <span className="opacity-75 text-[10px]">({transferredMB} MB)</span>
+              )}
+            </span>
+            {hasPercent && (
+              <div className="w-16 h-1.5 bg-zinc-800 rounded-full overflow-hidden border border-white/10 hidden sm:block">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-400 to-amber-200 transition-all duration-200 rounded-full"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      if (status === 'downloading-local') {
+        const hasPercent = typeof progress === 'number' && progress > 0;
+        return (
+          <div className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-mono font-medium bg-sky-950/60 text-sky-300 border border-sky-500/40">
+              <IconLoader2 size={11} className="animate-spin text-sky-300 shrink-0" />
+              <span>Downloading{hasPercent ? ` ${progress}%` : '...'}</span>
+              {transferredMB && (
+                <span className="opacity-75 text-[10px]">({transferredMB} MB)</span>
+              )}
+            </span>
+          </div>
+        );
+      }
+
+      if (status === 'saved-local') {
+        return (
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-sky-950/60 text-sky-300 border border-sky-500/40">
+            <IconCheck size={11} className="text-sky-400" />
+            <span>Saved to Device</span>
+          </span>
+        );
+      }
+
+      if (status === 'success' || status === 'skipped-duplicate') {
+        const isDuplicate = status === 'skipped-duplicate';
+        return (
+          <a
+            href={driveLink || '#'}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900/60 transition group/link"
+            title={isDuplicate ? "Already in Google Drive (Duplicate Skipped)" : "Open in Google Drive"}
+          >
+            <IconCheck size={11} className="text-emerald-400" />
+            <span>{isDuplicate ? "In Drive (Duplicate)" : "Saved to Drive"}</span>
+            {driveLink && <IconExternalLink size={11} className="opacity-70 group-hover/link:opacity-100" />}
+          </a>
+        );
+      }
+
+      if (status === 'failed') {
+        return (
+          <span
+            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-950/60 text-rose-300 border border-rose-500/30"
+            title={errorMsg || 'Upload failed'}
+          >
+            <IconAlertCircle size={11} className="text-rose-400" />
+            <span>Failed {errorMsg ? `(${errorMsg.slice(0, 15)}...)` : ''}</span>
+          </span>
+        );
+      }
+
+      return (
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-white/5 text-zinc-400 border border-white/10">
+          <span>Ready</span>
+        </span>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
